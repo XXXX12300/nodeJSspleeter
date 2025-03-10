@@ -7,7 +7,6 @@ const path = require("path");
 const app = express();
 const PORT = process.env.PORT || 10000;
 
-// Define directories
 const UPLOADS_DIR = path.join(__dirname, "uploads");
 const OUTPUTS_DIR = path.join(__dirname, "outputs");
 const VENV_DIR = path.join(__dirname, "venv");
@@ -21,23 +20,22 @@ const VENV_DIR = path.join(__dirname, "venv");
 function setupPythonEnv() {
     console.log("🔍 Checking Python virtual environment...");
 
-    // Create virtual environment if it does not exist
     if (!fs.existsSync(VENV_DIR)) {
         console.log("🚀 Creating Python virtual environment...");
         execSync("python3 -m venv venv", { stdio: "inherit" });
     }
 
-    // Upgrade pip to avoid dependency issues
-    console.log("⚡ Upgrading pip...");
+    console.log("⚡ Upgrading pip, setuptools, and wheel...");
     execSync(`${path.join(VENV_DIR, "bin", "pip")} install --upgrade pip setuptools wheel`, { stdio: "inherit" });
 
-    // **Fix NumPy installation issue**
-    console.log("📦 Installing NumPy (without compiling)...");
-    execSync(`${path.join(VENV_DIR, "bin", "pip")} install numpy==1.19.5 --no-build-isolation`, { stdio: "inherit" });
-
-    // **Install Spleeter**
-    console.log("🎶 Installing Spleeter...");
-    execSync(`${path.join(VENV_DIR, "bin", "pip")} install spleeter`, { stdio: "inherit" });
+    console.log("📦 Installing required dependencies...");
+    try {
+        execSync(`${path.join(VENV_DIR, "bin", "pip")} install numpy==1.21.6 spleeter`, { stdio: "inherit" });
+    } catch (err) {
+        console.log("⚠️ NumPy 1.21.6 failed, switching to latest stable version...");
+        execSync(`${path.join(VENV_DIR, "bin", "pip")} install numpy --no-build-isolation`, { stdio: "inherit" });
+        execSync(`${path.join(VENV_DIR, "bin", "pip")} install spleeter`, { stdio: "inherit" });
+    }
 
     console.log("✅ Spleeter is ready to use.");
 }
@@ -59,10 +57,8 @@ app.post("/upload", upload.single("file"), async (req, res) => {
     console.log(`🎶 Processing file: ${inputFilePath}`);
 
     try {
-        // Use Spleeter via Virtual Environment
         execSync(`${path.join(VENV_DIR, "bin", "spleeter")} separate -o ${OUTPUTS_DIR} -p spleeter:2stems ${inputFilePath}`, { stdio: "inherit" });
 
-        // Return the processed file URLs
         res.json({
             message: "Processing complete",
             vocals: `/download/${req.file.filename}/vocals.wav`,
