@@ -1,11 +1,26 @@
 const express = require("express");
 const multer = require("multer");
-const { execSync, spawn } = require("child_process");
+const { execSync } = require("child_process");
 const fs = require("fs");
 const path = require("path");
+const https = require("https");
 
-// Ensure required dependencies are installed
-function installMissingDependencies() {
+const app = express();
+const PORT = process.env.PORT || 10000;
+
+// Define directories
+const UPLOADS_DIR = path.join(__dirname, "uploads");
+const OUTPUTS_DIR = path.join(__dirname, "outputs");
+const MODEL_DIR = path.join(__dirname, "VocRem");
+const MODEL_PATH = path.join(MODEL_DIR, "UVR_MDXNET_Main.onnx");
+
+// Ensure directories exist
+[UPLOADS_DIR, OUTPUTS_DIR, MODEL_DIR].forEach((dir) => {
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+});
+
+// **1️⃣ Ensure Dependencies Are Installed**
+function installDependencies() {
     console.log("🔍 Checking dependencies...");
 
     try {
@@ -25,59 +40,67 @@ function installMissingDependencies() {
     }
 }
 
-// Run installation check before starting the server
-installMissingDependencies();
+// **2️⃣ Automatically Download Model If Missing**
+async function downloadModel() {
+    return new Promise((resolve, reject) => {
+        if (fs.existsSync(MODEL_PATH)) {
+            console.log("✅ Model already exists.");
+            return resolve();
+        }
 
-const app = express();
-const PORT = process.env.PORT || 10000;
+        console.log("🌍 Downloading ONNX Model...");
+        const file = fs.createWriteStream(MODEL_PATH);
+        https.get("https://github.com/TRvlvr/model_repo/releases/download/all_public_uvr_models/UVR_MDXNET_Main.onnx", (response) => {
+            response.pipe(file);
+            file.on("finish", () => {
+                file.close();
+                console.log("✅ Model download complete.");
+                resolve();
+            });
+        }).on("error", (error) => {
+            console.error("❌ Error downloading model:", error);
+            reject(error);
+        });
+    });
+}
 
-const UPLOADS_DIR = path.join(__dirname, "uploads");
-const OUTPUTS_DIR = path.join(__dirname, "outputs");
-const MODEL_PATH = path.join(__dirname, "VocRem/UVR_MDXNET_Main.onnx");
-
-// Ensure directories exist
-if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR);
-if (!fs.existsSync(OUTPUTS_DIR)) fs.mkdirSync(OUTPUTS_DIR);
-
-// Middleware for parsing requests
-app.use(express.json());
-
-// Configure file upload
+// **3️⃣ Configure Multer for File Uploads**
 const storage = multer.diskStorage({
     destination: (req, file, cb) => cb(null, UPLOADS_DIR),
     filename: (req, file, cb) => cb(null, Date.now() + path.extname(file.originalname)),
 });
 const upload = multer({ storage });
 
-// **1️⃣ Upload and process audio file**
-app.post("/upload", upload.single("file"), (req, res) => {
+// **4️⃣ Upload & Process Audio File**
+app.post("/upload", upload.single("file"), async (req, res) => {
     if (!req.file) return res.status(400).json({ error: "No file uploaded" });
 
     const inputFilePath = req.file.path;
-    const outputVocals = path.join(OUTPUTS_DIR, req.file.filename + "_vocals.wav");
-    const outputInstrumental = path.join(OUTPUTS_DIR, req.file.filename + "_instrumental.wav");
+    const outputPath = path.join(OUTPUTS_DIR, req.file.filename);
 
     console.log(`🎶 Processing file: ${inputFilePath}`);
 
     try {
-        // Run Spleeter for vocal separation
+        // Use Spleeter for separation (2-stem)
         execSync(`spleeter separate -o ${OUTPUTS_DIR} -p spleeter:2stems ${inputFilePath}`, { stdio: "inherit" });
 
-        // Send the results back to the client
+        // Return the processed file URLs
         res.json({
             message: "Processing complete",
-            vocals: `/download/${req.file.filename}_vocals.wav`,
-            instrumental: `/download/${req.file.filename}_instrumental.wav`,
+            vocals: `/download/${req.file.filename}/vocals.wav`,
+            instrumental: `/download/${req.file.filename}/accompaniment.wav`,
         });
     } catch (error) {
-        console.error("❌ Spleeter error:", error);
+        console.error("❌ Error during processing:", error);
         res.status(500).json({ error: "Failed to process file" });
     }
 });
 
-// **2️⃣ Serve processed files**
-app.get("/download/:filename", (req, res) => {
-    const filePath = path.join(OUTPUTS_DIR, req.params.filename);
+// **5️⃣ Serve Processed Files**
+app.get("/download/:file/:type", (req, res) => {
+    const { file, type } = req.params;
+    const filePath = path.join(OUTPUTS_DIR, file, `${type}.wav`);
+
     if (fs.existsSync(filePath)) {
         res.download(filePath);
     } else {
@@ -85,16 +108,21 @@ app.get("/download/:filename", (req, res) => {
     }
 });
 
-// **3️⃣ Check if the ONNX model is available**
+// **6️⃣ Check Model Status**
 app.get("/check-model", (req, res) => {
     if (fs.existsSync(MODEL_PATH)) {
         res.json({ status: "Model is available" });
     } else {
-        res.status(404).json({ error: "Model not found. Please upload it to VocRem folder." });
+        res.status(404).json({ error: "Model not found. Please wait for it to download." });
     }
 });
 
-// **4️⃣ Start the server**
-app.listen(PORT, () => {
-    console.log(`🚀 Vocal Remover API running on port ${PORT}`);
-});
+// **7️⃣ Start Server After Setup**
+(async () => {
+    installDependencies();
+    await downloadModel();
+
+    app.listen(PORT, () => {
+        console.log(`🚀 Vocal Remover API running on port ${PORT}`);
+    });
+})();
