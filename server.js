@@ -1,4 +1,5 @@
 const express = require("express");
+const multer = require("multer"); // needed for file uploads
 const { execSync } = require("child_process");
 const fs = require("fs");
 const path = require("path");
@@ -6,15 +7,15 @@ const path = require("path");
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Folders
+// Directories
 const OUTPUTS_DIR = path.join(__dirname, "outputs");
 const VENV_DIR = path.join(__dirname, "venv");
 if (!fs.existsSync(OUTPUTS_DIR)) fs.mkdirSync(OUTPUTS_DIR);
 
-// Serve output folder
+// Serve outputs statically
 app.use("/outputs", express.static(OUTPUTS_DIR));
 
-// 1) Setup Python (CPU-Only)
+// 1) Python environment setup
 function setupPythonEnv() {
   console.log("🔍 Checking Python venv...");
   if (!fs.existsSync(VENV_DIR)) {
@@ -25,9 +26,8 @@ function setupPythonEnv() {
   console.log("⚡ Installing Python deps...");
   execSync(`${VENV_DIR}/bin/pip install --upgrade pip setuptools wheel`, { stdio: "inherit" });
 
-  // Ensure requirements.txt is present
+  // Create requirements if missing
   if (!fs.existsSync("requirements.txt")) {
-    console.log("⚠️ No requirements.txt found. Creating one...");
     fs.writeFileSync("requirements.txt", `
 --extra-index-url https://download.pytorch.org/whl/cpu
 torch==2.0.0+cpu
@@ -38,47 +38,70 @@ ffmpeg-python
 `.trim());
   }
 
-  // Install CPU-only Torch, Torchaudio, and Demucs
   execSync(`${VENV_DIR}/bin/pip install -r requirements.txt`, { stdio: "inherit" });
-  console.log("✅ Python environment ready (CPU-only).");
+  console.log("✅ CPU Demucs env ready.");
 }
 
-// 2) Simple test route
+// 2) Basic root route
 app.get("/", (req, res) => {
   res.send("🎶 CPU Demucs server running!");
 });
 
-// 3) Trigger separation route
-app.get("/separate", async (req, res) => {
+// 3) Configure Multer to handle file uploads
+const upload = multer({
+  dest: "uploads/"
+});
+
+// 4) POST /upload route
+app.post("/upload", upload.single("file"), async (req, res) => {
+  // If no file
+  if (!req.file) {
+    return res.status(400).json({ error: "No file uploaded" });
+  }
+
+  // Full path to the uploaded file
+  const inputFilePath = path.join(__dirname, req.file.path);
+  console.log("🎵 Received file:", inputFilePath);
+
   try {
-    // For demonstration, you can run demucs on "example.mp3" if present
-    if (!fs.existsSync("example.mp3")) {
-      return res.json({ message: "No example.mp3 found in root." });
-    }
-    console.log("🎵 Running Demucs CPU...");
-    execSync(`${VENV_DIR}/bin/demucs --two-stems=vocals --no-cuda -o ${OUTPUTS_DIR} example.mp3`, { stdio: "inherit" });
-
-    // Suppose demucs writes to a subfolder in outputs/
-    const folders = fs.readdirSync(OUTPUTS_DIR).filter(f => fs.statSync(path.join(OUTPUTS_DIR, f)).isDirectory());
-    if (!folders.length) {
-      return res.json({ error: "No demucs output folder found." });
-    }
-    const resultFolder = path.join(OUTPUTS_DIR, folders[0]);
-    const vocalsPath = path.join(resultFolder, "vocals.wav");
-    const noVocalsPath = path.join(resultFolder, "no_vocals.wav");
-
-    res.json({
-      message: "Separation complete",
-      vocals: `/outputs/${folders[0]}/vocals.wav`,
-      instrumental: `/outputs/${folders[0]}/no_vocals.wav`
+    // Run Demucs in CPU mode
+    execSync(`${VENV_DIR}/bin/demucs --two-stems=vocals --no-cuda -o ${OUTPUTS_DIR} "${inputFilePath}"`, {
+      stdio: "inherit"
     });
-  } catch (err) {
-    console.error("Demucs error:", err);
-    res.status(500).json({ error: "Failed to separate track." });
+
+    // demucs creates subfolder(s) in outputs/
+    const folders = fs.readdirSync(OUTPUTS_DIR).filter(f => {
+      return fs.statSync(path.join(OUTPUTS_DIR, f)).isDirectory();
+    });
+
+    if (!folders.length) {
+      return res.status(500).json({ error: "Demucs output folder not found." });
+    }
+
+    // If multiple subfolders, pick the latest
+    const latestFolder = folders.sort((a, b) => {
+      const atime = fs.statSync(path.join(OUTPUTS_DIR, a)).mtime;
+      const btime = fs.statSync(path.join(OUTPUTS_DIR, b)).mtime;
+      return btime - atime; // desc
+    })[0];
+
+    // Paths to the separated files
+    const vocalsPath = `/outputs/${latestFolder}/vocals.wav`;
+    const noVocalsPath = `/outputs/${latestFolder}/no_vocals.wav`;
+
+    // Return URLs so the client can download them
+    res.json({
+      message: "✅ Separation complete!",
+      vocals: vocalsPath,
+      instrumental: noVocalsPath
+    });
+  } catch (error) {
+    console.error("Demucs error:", error);
+    res.status(500).json({ error: "Failed to separate track" });
   }
 });
 
-// 4) Start server
+// 5) Start server
 setupPythonEnv();
 app.listen(PORT, () => {
   console.log(`🚀 CPU Demucs server on port ${PORT}`);
