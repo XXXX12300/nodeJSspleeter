@@ -1,89 +1,74 @@
-  const express = require("express");
+const express = require("express");
 const multer = require("multer");
-const fs = require("fs");
 const path = require("path");
-const ort = require("onnxruntime-node");
-const ffmpeg = require("fluent-ffmpeg");
+const fs = require("fs");
+const { Spleeter } = require("spleeter-node");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-const upload = multer({ dest: "uploads/" });
-const MODEL_PATH = path.join(__dirname, "VocRem/UVR_MDXNET_Main.onnx");
+// Upload folder setup
+const UPLOADS_DIR = path.join(__dirname, "uploads");
+const OUTPUT_DIR = path.join(__dirname, "output");
 
 // Ensure directories exist
-if (!fs.existsSync("uploads")) fs.mkdirSync("uploads");
-if (!fs.existsSync("output")) fs.mkdirSync("output");
+fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 
-// Load ONNX Model
-let session;
-(async () => {
-  try {
-    session = await ort.InferenceSession.create(MODEL_PATH);
-    console.log("ONNX Model loaded!");
-  } catch (error) {
-    console.error("Failed to load model:", error);
+// Multer setup for handling file uploads
+const storage = multer.diskStorage({
+  destination: UPLOADS_DIR,
+  filename: (req, file, cb) => {
+    cb(null, Date.now() + path.extname(file.originalname));
   }
-})();
+});
+const upload = multer({ storage });
 
-// API Home Route
+// Route to check API status
 app.get("/", (req, res) => {
-  res.send("🎶 Vocal Remover API is Running!");
+  res.send("🎶 Spleeter Vocal Remover API is running!");
 });
 
-// Upload & Process Audio
+// Upload and process audio
 app.post("/upload", upload.single("file"), async (req, res) => {
-  if (!req.file) return res.status(400).json({ error: "No file uploaded" });
-
-  const inputFilePath = req.file.path;
-  const outputFilePath = `output/${req.file.filename}_processed.wav`;
-
   try {
-    console.log("Processing file:", inputFilePath);
+    if (!req.file) {
+      return res.status(400).json({ error: "No file uploaded!" });
+    }
 
-    // Convert input to WAV
-    await new Promise((resolve, reject) => {
-      ffmpeg(inputFilePath)
-        .toFormat("wav")
-        .on("end", resolve)
-        .on("error", reject)
-        .save(outputFilePath);
-    });
+    const inputFilePath = req.file.path;
+    const outputPath = path.join(OUTPUT_DIR, req.file.filename);
 
-    // Read audio data
-    const audioBuffer = fs.readFileSync(outputFilePath);
-    const inputTensor = new ort.Tensor("float32", new Float32Array(audioBuffer), [1, 2, audioBuffer.length]);
+    // Use Spleeter to separate vocals and instrumental
+    const spleeter = new Spleeter();
+    await spleeter.separate(inputFilePath, outputPath, "2stems"); // "2stems" for vocals/instrumental
 
-    // Run ONNX Inference
-    const results = await session.run({ "input": inputTensor });
-
-    // Process outputs
-    const vocalsOutput = results["vocals"].data;
-    const instrumentalOutput = results["accompaniment"].data;
-
-    // Save separated outputs
-    fs.writeFileSync(`output/${req.file.filename}_vocals.wav`, Buffer.from(vocalsOutput));
-    fs.writeFileSync(`output/${req.file.filename}_instrumental.wav`, Buffer.from(instrumentalOutput));
-
+    // Return file paths for download
     res.json({
-      message: "Processing complete!",
-      vocals: `/download/${req.file.filename}_vocals.wav`,
-      instrumental: `/download/${req.file.filename}_instrumental.wav`
+      file_id: req.file.filename,
+      vocals: `/download/${req.file.filename}/vocals.wav`,
+      instrumental: `/download/${req.file.filename}/accompaniment.wav`
     });
+
   } catch (error) {
-    console.error("Error processing file:", error);
-    res.status(500).json({ error: "Failed to process audio." });
+    console.error("Processing error:", error);
+    res.status(500).json({ error: "Audio processing failed!" });
   }
 });
 
-// Download Processed Files
-app.get("/download/:filename", (req, res) => {
-  const file = path.join(__dirname, "output", req.params.filename);
-  if (!fs.existsSync(file)) return res.status(404).json({ error: "File not found" });
-  res.download(file);
+// Serve processed files
+app.get("/download/:file_id/:type", (req, res) => {
+  const { file_id, type } = req.params;
+  const filePath = path.join(OUTPUT_DIR, file_id, `${type}.wav`);
+
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).json({ error: "File not found!" });
+  }
+
+  res.download(filePath);
 });
 
-// Start Server
+// Start server
 app.listen(PORT, () => {
-  console.log(`🎶 Vocal Remover API running on port ${PORT}`);
+  console.log(`🚀 Server running on http://localhost:${PORT}`);
 });
