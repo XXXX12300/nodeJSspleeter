@@ -7,6 +7,7 @@ const path = require("path");
 const app = express();
 const PORT = process.env.PORT || 10000;
 
+// Directories
 const UPLOADS_DIR = path.join(__dirname, "uploads");
 const OUTPUTS_DIR = path.join(__dirname, "outputs");
 const VENV_DIR = path.join(__dirname, "venv");
@@ -19,74 +20,61 @@ const VENV_DIR = path.join(__dirname, "venv");
 // **1️⃣ Setup Python Virtual Environment & Install Dependencies**
 function setupPythonEnv() {
     console.log("🔍 Checking Python virtual environment...");
-
     if (!fs.existsSync(VENV_DIR)) {
         console.log("🚀 Creating Python virtual environment...");
-        execSync("python3 -m venv venv", { stdio: "inherit" });
+        execSync(`python3 -m venv ${VENV_DIR}`);
     }
 
     console.log("⚡ Upgrading pip, setuptools, and wheel...");
-    execSync(`${path.join(VENV_DIR, "bin", "pip")} install --upgrade pip setuptools wheel`, { stdio: "inherit" });
+    execSync(`${VENV_DIR}/bin/pip install --upgrade pip setuptools wheel`, { stdio: "inherit" });
 
-    console.log("📦 Installing required dependencies...");
-    try {
-        execSync(`${path.join(VENV_DIR, "bin", "pip")} install numpy==1.21.6 spleeter`, { stdio: "inherit" });
-    } catch (err) {
-        console.log("⚠️ NumPy 1.21.6 failed, switching to latest stable version...");
-        execSync(`${path.join(VENV_DIR, "bin", "pip")} install numpy --no-build-isolation`, { stdio: "inherit" });
-        execSync(`${path.join(VENV_DIR, "bin", "pip")} install spleeter`, { stdio: "inherit" });
-    }
+    console.log("📦 Installing dependencies...");
+    execSync(
+        `${VENV_DIR}/bin/pip install numpy --no-build-isolation --pre torch torchaudio demucs`,
+        { stdio: "inherit" }
+    );
 
-    console.log("✅ Spleeter is ready to use.");
+    console.log("✅ Python environment ready!");
 }
 
-// **2️⃣ Configure Multer for File Uploads**
+// **2️⃣ File Upload Handling**
 const storage = multer.diskStorage({
     destination: (req, file, cb) => cb(null, UPLOADS_DIR),
-    filename: (req, file, cb) => cb(null, Date.now() + path.extname(file.originalname)),
+    filename: (req, file, cb) => cb(null, Date.now() + "-" + file.originalname),
 });
 const upload = multer({ storage });
 
-// **3️⃣ Upload & Process Audio File**
+// **3️⃣ Process Audio with Demucs**
 app.post("/upload", upload.single("file"), async (req, res) => {
     if (!req.file) return res.status(400).json({ error: "No file uploaded" });
 
-    const inputFilePath = req.file.path;
-    const outputPath = path.join(OUTPUTS_DIR, req.file.filename);
-
-    console.log(`🎶 Processing file: ${inputFilePath}`);
+    const inputPath = path.join(UPLOADS_DIR, req.file.filename);
+    const outputPath = OUTPUTS_DIR;
+    
+    console.log(`🎵 Processing file: ${inputPath}`);
 
     try {
-        execSync(`${path.join(VENV_DIR, "bin", "spleeter")} separate -o ${OUTPUTS_DIR} -p spleeter:2stems ${inputFilePath}`, { stdio: "inherit" });
+        execSync(`${VENV_DIR}/bin/demucs --two-stems=vocals -o ${outputPath} ${inputPath}`, { stdio: "inherit" });
+        
+        const resultDir = fs.readdirSync(outputPath)[0]; // Get folder name
+        const vocalsPath = path.join(outputPath, resultDir, "vocals.wav");
+        const instrumentalPath = path.join(outputPath, resultDir, "no_vocals.wav");
 
         res.json({
-            message: "Processing complete",
-            vocals: `/download/${req.file.filename}/vocals.wav`,
-            instrumental: `/download/${req.file.filename}/accompaniment.wav`,
+            message: "✅ Separation complete!",
+            vocals: `/outputs/${path.basename(vocalsPath)}`,
+            instrumental: `/outputs/${path.basename(instrumentalPath)}`,
         });
+
     } catch (error) {
-        console.error("❌ Error during processing:", error);
-        res.status(500).json({ error: "Failed to process file" });
+        console.error("🚨 Separation failed:", error);
+        res.status(500).json({ error: "Failed to separate vocals" });
     }
 });
 
-// **4️⃣ Serve Processed Files**
-app.get("/download/:file/:type", (req, res) => {
-    const { file, type } = req.params;
-    const filePath = path.join(OUTPUTS_DIR, file, `${type}.wav`);
+// **4️⃣ Serve Output Files**
+app.use("/outputs", express.static(OUTPUTS_DIR));
 
-    if (fs.existsSync(filePath)) {
-        res.download(filePath);
-    } else {
-        res.status(404).json({ error: "File not found" });
-    }
-});
-
-// **5️⃣ Start Server After Setup**
-(async () => {
-    setupPythonEnv();
-
-    app.listen(PORT, () => {
-        console.log(`🚀 Vocal Remover API running on port ${PORT}`);
-    });
-})();
+// **5️⃣ Start Server**
+setupPythonEnv(); // Ensure everything is installed before starting
+app.listen(PORT, () => console.log(`🚀 Server running on http://localhost:${PORT}`));
