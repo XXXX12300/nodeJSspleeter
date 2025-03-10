@@ -25,14 +25,9 @@ function setupPythonEnv() {
         execSync(`python3 -m venv ${VENV_DIR}`);
     }
 
-    console.log("⚡ Upgrading pip, setuptools, and wheel...");
+    console.log("⚡ Installing dependencies...");
     execSync(`${VENV_DIR}/bin/pip install --upgrade pip setuptools wheel`, { stdio: "inherit" });
-
-    console.log("📦 Installing dependencies...");
-    execSync(
-        `${VENV_DIR}/bin/pip install numpy --no-build-isolation --pre torch torchaudio demucs`,
-        { stdio: "inherit" }
-    );
+    execSync(`${VENV_DIR}/bin/pip install -r requirements.txt`, { stdio: "inherit" });
 
     console.log("✅ Python environment ready!");
 }
