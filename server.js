@@ -23,19 +23,19 @@ function setupPythonEnv() {
 
     // Create virtual environment if it does not exist
     if (!fs.existsSync(VENV_DIR)) {
-        console.log("🚀 Creating Python 3.8 virtual environment...");
+        console.log("🚀 Creating Python virtual environment...");
         execSync("python3 -m venv venv", { stdio: "inherit" });
     }
 
     // Upgrade pip to avoid dependency issues
     console.log("⚡ Upgrading pip...");
-    execSync(`${path.join(VENV_DIR, "bin", "pip")} install --upgrade pip`, { stdio: "inherit" });
+    execSync(`${path.join(VENV_DIR, "bin", "pip")} install --upgrade pip setuptools wheel`, { stdio: "inherit" });
 
-    // **Force NumPy version compatible with Spleeter**
-    console.log("📦 Installing NumPy 1.18.5...");
-    execSync(`${path.join(VENV_DIR, "bin", "pip")} install numpy==1.18.5`, { stdio: "inherit" });
+    // **Fix NumPy installation issue**
+    console.log("📦 Installing NumPy (without compiling)...");
+    execSync(`${path.join(VENV_DIR, "bin", "pip")} install numpy==1.19.5 --no-build-isolation`, { stdio: "inherit" });
 
-    // **Now install Spleeter**
+    // **Install Spleeter**
     console.log("🎶 Installing Spleeter...");
     execSync(`${path.join(VENV_DIR, "bin", "pip")} install spleeter`, { stdio: "inherit" });
 
