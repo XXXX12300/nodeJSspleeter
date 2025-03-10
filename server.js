@@ -17,7 +17,7 @@ const VENV_DIR = path.join(__dirname, "venv");
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 });
 
-// **1️⃣ Setup Python Virtual Environment & Install Dependencies**
+// **1️⃣ Ensure Python Environment**
 function setupPythonEnv() {
     console.log("🔍 Checking Python virtual environment...");
     if (!fs.existsSync(VENV_DIR)) {
@@ -27,8 +27,13 @@ function setupPythonEnv() {
 
     console.log("⚡ Installing dependencies...");
     execSync(`${VENV_DIR}/bin/pip install --upgrade pip setuptools wheel`, { stdio: "inherit" });
-    execSync(`${VENV_DIR}/bin/pip install -r requirements.txt`, { stdio: "inherit" });
 
+    if (!fs.existsSync("requirements.txt")) {
+        console.log("⚠️ `requirements.txt` not found! Creating a new one...");
+        fs.writeFileSync("requirements.txt", "torch\ntorchaudio\ndemucs\nnumpy\nffmpeg-python\n");
+    }
+
+    execSync(`${VENV_DIR}/bin/pip install -r requirements.txt`, { stdio: "inherit" });
     console.log("✅ Python environment ready!");
 }
 
@@ -49,7 +54,7 @@ app.post("/upload", upload.single("file"), async (req, res) => {
     console.log(`🎵 Processing file: ${inputPath}`);
 
     try {
-        execSync(`${VENV_DIR}/bin/demucs --two-stems=vocals -o ${outputPath} ${inputPath}`, { stdio: "inherit" });
+        execSync(`${VENV_DIR}/bin/demucs --two-stems=vocals --no-cuda -o ${outputPath} ${inputPath}`, { stdio: "inherit" });
         
         const resultDir = fs.readdirSync(outputPath)[0]; // Get folder name
         const vocalsPath = path.join(outputPath, resultDir, "vocals.wav");
@@ -71,5 +76,5 @@ app.post("/upload", upload.single("file"), async (req, res) => {
 app.use("/outputs", express.static(OUTPUTS_DIR));
 
 // **5️⃣ Start Server**
-setupPythonEnv(); // Ensure everything is installed before starting
+setupPythonEnv(); // Ensure dependencies are installed
 app.listen(PORT, () => console.log(`🚀 Server running on http://localhost:${PORT}`));
