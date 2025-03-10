@@ -17,18 +17,26 @@ const VENV_DIR = path.join(__dirname, "venv");
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 });
 
-// **1️⃣ Setup Virtual Environment & Install Spleeter**
+// **1️⃣ Setup Python Virtual Environment & Install Dependencies**
 function setupPythonEnv() {
     console.log("🔍 Checking Python virtual environment...");
 
-    // Create virtual environment if not exists
+    // Create virtual environment if it does not exist
     if (!fs.existsSync(VENV_DIR)) {
-        console.log("🚀 Creating Python virtual environment...");
+        console.log("🚀 Creating Python 3.8 virtual environment...");
         execSync("python3 -m venv venv", { stdio: "inherit" });
     }
 
-    // Install spleeter inside the virtual environment
-    console.log("📦 Installing Spleeter...");
+    // Upgrade pip to avoid dependency issues
+    console.log("⚡ Upgrading pip...");
+    execSync(`${path.join(VENV_DIR, "bin", "pip")} install --upgrade pip`, { stdio: "inherit" });
+
+    // **Force NumPy version compatible with Spleeter**
+    console.log("📦 Installing NumPy 1.18.5...");
+    execSync(`${path.join(VENV_DIR, "bin", "pip")} install numpy==1.18.5`, { stdio: "inherit" });
+
+    // **Now install Spleeter**
+    console.log("🎶 Installing Spleeter...");
     execSync(`${path.join(VENV_DIR, "bin", "pip")} install spleeter`, { stdio: "inherit" });
 
     console.log("✅ Spleeter is ready to use.");
